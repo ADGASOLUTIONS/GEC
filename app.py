@@ -3,162 +3,188 @@ import pandas as pd
 from datetime import date
 import os
 import base64
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="GEC - ADGA SOLUTIONS", layout="wide")
 
-# --- STYLE CSS POUR LE DESIGN ---
-st.markdown("""
-    <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #1E3A8A; color: white; }
-    .stDataFrame { border: 1px solid #e6e9ef; border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- PARAMÈTRES EMAIL (À CONFIGURER AVEC TON CODE GOOGLE) ---
+EMAIL_EXPEDITEUR = "ton-email@gmail.com"  
+MOT_DE_PASSE_APP = "xxxx xxxx xxxx xxxx" 
 
-# --- INITIALISATION DU SYSTÈME ---
+# Dictionnaire pour les notifications (Emails réels des services de LTA)
+SERVICES_MAILS = {
+    "Secrétariat": "secretariat.lta@gmail.com",
+    "Direction Générale (DG)": "dg.lta@gmail.com",
+    "Assistant de Direction (AD)": "ad.lta@gmail.com",
+    "DAF": "daf.lta@gmail.com",
+    "DRH": "drh.lta@gmail.com",
+    "Commercial": "commercial.lta@gmail.com"
+}
+
+# --- FONCTION D'ENVOI DE NOTIFICATION ---
+def envoyer_notification(destinataire_email, service_destinataire, objet_courrier):
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_EXPEDITEUR
+        msg['To'] = destinataire_email
+        msg['Subject'] = f"🔔 Nouveau courrier GEC - Service {service_destinataire}"
+
+        corps = f"""
+        Bonjour l'équipe {service_destinataire},
+        
+        Un nouveau courrier concernant "{objet_courrier}" vient de vous être transféré dans le logiciel GEC.
+        
+        Veuillez vous connecter pour le traiter.
+        Lien : https://gecdeadgasolutions.streamlit.app/
+        
+        Cordialement,
+        Système GEC - ADGA SOLUTIONS.
+        """
+        msg.attach(MIMEText(corps, 'plain'))
+
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(EMAIL_EXPEDITEUR, MOT_DE_PASSE_APP)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        return False
+
+# --- SYSTÈME DE CONNEXION SIMPLIFIÉ ---
+def check_password():
+    if "password_correct" not in st.session_state:
+        st.markdown("<h1 style='text-align: center;'>🔐 Connexion GEC - LTA</h1>", unsafe_allow_html=True)
+        col_l, col_m, col_r = st.columns([1, 2, 1])
+        with col_m:
+            with st.form("login_form"):
+                # On ne demande que le service et le mot de passe
+                service_user = st.selectbox("Sélectionnez votre Service", list(SERVICES_MAILS.keys()))
+                pwd_input = st.text_input("Mot de passe", type="password")
+                submitted = st.form_submit_button("Entrer dans l'espace")
+                
+                if submitted:
+                    # MOT DE PASSE UNIQUE : LTA2026
+                    if pwd_input == "LTA2026":
+                        st.session_state["password_correct"] = True
+                        st.session_state["user_service"] = service_user
+                        st.rerun()
+                    else:
+                        st.error("❌ Mot de passe incorrect")
+        return False
+    return True
+
+if not check_password():
+    st.stop()
+
+# --- INITIALISATION SYSTÈME ---
 UPLOAD_DIR = "archives_pdf"
-if not os.path.exists(UPLOAD_DIR):
-    os.makedirs(UPLOAD_DIR)
+if not os.path.exists(UPLOAD_DIR): os.makedirs(UPLOAD_DIR)
 
 DB_FILE = "registre_gec_adga.xlsx"
-SERVICES = ["Secrétariat", "Direction Générale (DG)", "Assistant de Direction (AD)", "DAF", "DRH", "Commercial"]
-
-# Création ou mise à jour de la base de données
-COLUMNS = ["ID", "Date", "Type", "Correspondant", "Objet", "Référence", "Fichier", "Localisation", "Statut", "Observations"]
-
 if not os.path.exists(DB_FILE):
+    COLUMNS = ["ID", "Date", "Type", "Correspondant", "Objet", "Référence", "Fichier", "Localisation", "Statut", "Observations"]
     pd.DataFrame(columns=COLUMNS).to_excel(DB_FILE, index=False)
-else:
-    # Vérification de sécurité : si le fichier existe mais qu'il manque 'Observations'
-    df_check = pd.read_excel(DB_FILE)
-    if "Observations" not in df_check.columns:
-        df_check["Observations"] = ""
-        df_check.to_excel(DB_FILE, index=False)
 
-# --- FONCTION DE VISUALISATION PDF ---
 def display_pdf(file_path):
     with open(file_path, "rb") as f:
         base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="700" type="application/pdf"></iframe>'
-    st.markdown(pdf_display, unsafe_allow_html=True)
+    st.markdown(f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="700" type="application/pdf"></iframe>', unsafe_allow_html=True)
 
-# --- BARRE LATÉRALE (SIDEBAR) ---
+# --- BARRE LATÉRALE ---
+role_actuel = st.session_state['user_service']
 with st.sidebar:
-    # Remplace par le lien de ton logo ADGA SOLUTION
     st.image("https://via.placeholder.com/150", caption="ADGA SOLUTIONS", use_container_width=True)
     st.markdown("---")
-    st.write("**👤 Utilisateur :** Durcin Henri D. ODJO")
+    st.write(f"**👤 Connecté en tant que :**")
+    st.info(f"📍 {role_actuel}")
     st.write("**🏢 Entreprise :** LTA")
     st.markdown("---")
-    role_actuel = st.selectbox("🔑 Changer de service (Simulation) :", SERVICES)
-    st.markdown("---")
+    
+    if st.button("🚪 Déconnexion"):
+        del st.session_state["password_correct"]
+        st.rerun()
     st.caption("Développé par **ADGA SOLUTIONS**")
 
 # --- CORPS PRINCIPAL ---
-st.title(f"📂 GEC - Espace {role_actuel}")
-st.markdown(f"Gestion du circuit de courrier pour **Logistique et Travaux en Afrique (LTA)**")
+st.title(f"📂 Espace GEC - {role_actuel}")
 
-# --- 1. INTERFACE SECRÉTARIAT (ENREGISTREMENT) ---
+# 1. SECTION ENREGISTREMENT (RÉSERVÉ AU SECRÉTARIAT)
 if role_actuel == "Secrétariat":
-    with st.expander("➕ Enregistrer un nouveau courrier entrant/sortant", expanded=True):
+    with st.expander("➕ Enregistrer un nouveau courrier", expanded=True):
         col1, col2 = st.columns(2)
         with col1:
-            type_c = st.selectbox("Type de courrier", ["Arrivée", "Départ"])
-            contact = st.text_input("Expéditeur / Destinataire")
-            ref = st.text_input("Référence du document")
+            type_c = st.selectbox("Type", ["Arrivée", "Départ"])
+            contact = st.text_input("Correspondant")
+            ref = st.text_input("Référence")
         with col2:
-            objet = st.text_area("Objet du courrier")
-            uploaded_file = st.file_uploader("Joindre le scan (PDF obligatoire)", type=["pdf"])
+            objet = st.text_area("Objet")
+            up_file = st.file_uploader("Scan PDF", type=["pdf"])
         
         if st.button("🚀 Enregistrer et Envoyer au DG"):
-            if contact and objet and uploaded_file:
+            if contact and objet and up_file:
                 df = pd.read_excel(DB_FILE)
                 new_id = len(df) + 1
-                file_name = f"ID{new_id}_{uploaded_file.name}"
+                f_name = f"ID{new_id}_{up_file.name}"
+                with open(os.path.join(UPLOAD_DIR, f_name), "wb") as f: f.write(up_file.getbuffer())
                 
-                # Sauvegarde du fichier physique
-                with open(os.path.join(UPLOAD_DIR, file_name), "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                
-                # Ajout dans Excel
-                new_data = {
-                    "ID": new_id, "Date": date.today().strftime("%d/%m/%Y"),
-                    "Type": type_c, "Correspondant": contact, "Objet": objet,
-                    "Référence": ref, "Fichier": file_name,
-                    "Localisation": "Direction Générale (DG)", 
-                    "Statut": "Nouveau / En attente DG",
-                    "Observations": "Enregistré par Secrétariat"
-                }
-                df = pd.concat([df, pd.DataFrame([new_data])], ignore_index=False)
+                new_row = {"ID": new_id, "Date": date.today().strftime("%d/%m/%Y"), "Type": type_c, "Correspondant": contact, "Objet": objet, "Référence": ref, "Fichier": f_name, "Localisation": "Direction Générale (DG)", "Statut": "Nouveau / Attente DG", "Observations": "Enregistré par Secrétariat"}
+                df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=False)
                 df.to_excel(DB_FILE, index=False)
-                st.success(f"✅ Courrier ID {new_id} envoyé à la Direction Générale !")
+                
+                # Notification Email auto au DG
+                envoyer_notification(SERVICES_MAILS["Direction Générale (DG)"], "Direction Générale (DG)", objet)
+                
+                st.success("✅ Enregistré ! Notification envoyée à la Direction Générale.")
                 st.rerun()
-            else:
-                st.error("⚠️ Veuillez remplir tous les champs et joindre le fichier PDF.")
 
-# --- 2. GESTION DES FLUX (POUR TOUS LES SERVICES) ---
+# 2. GESTION DES FLUX
 st.markdown("---")
-st.subheader(f"📥 Courriers en attente dans votre service")
+df_all = pd.read_excel(DB_FILE).fillna("")
+mes_docs = df_all[df_all["Localisation"] == role_actuel]
 
-full_df = pd.read_excel(DB_FILE).fillna("")
-# Filtrer les courriers présents dans le service de l'utilisateur actuel
-mes_courriers = full_df[full_df["Localisation"] == role_actuel]
-
-if not mes_courriers.empty:
-    # Affichage du tableau simplifié
-    st.dataframe(mes_courriers[["ID", "Date", "Type", "Correspondant", "Objet", "Observations", "Statut"]], use_container_width=True)
+if not mes_docs.empty:
+    st.subheader(f"📥 Courriers à traiter ({len(mes_docs)})")
+    st.dataframe(mes_docs[["ID", "Date", "Correspondant", "Objet", "Statut"]], use_container_width=True)
     
-    st.markdown("### ⚙️ Action sur le courrier sélectionné")
     c1, c2 = st.columns([1, 2])
-    
     with c1:
-        id_choisi = st.selectbox("Sélectionner l'ID", mes_courriers["ID"])
-        courrier_focus = mes_courriers[mes_courriers["ID"] == id_choisi].iloc[0]
+        sel_id = st.selectbox("Sélectionner l'ID", mes_docs["ID"])
+        courrier = mes_docs[mes_docs["ID"] == sel_id].iloc[0]
         
-        st.write("**Détails :**")
-        st.write(f"🔹 **Objet :** {courrier_focus['Objet']}")
-        st.write(f"🔹 **Réf :** {courrier_focus['Référence']}")
-        
-        if st.button("👁️ Visualiser le document"):
-            st.session_state['view_pdf'] = courrier_focus['Fichier']
+        if st.button("👁️ Visualiser le PDF"): 
+            st.session_state['view_pdf'] = courrier['Fichier']
         
         st.markdown("---")
-        st.write("**📤 Transférer le dossier**")
-        destinataire = st.selectbox("Vers le service :", [s for s in SERVICES if s != role_actuel])
-        note = st.text_area("Vos instructions / annotations :")
+        dest = st.selectbox("Transférer au service :", [s for s in SERVICES_MAILS.keys() if s != role_actuel])
+        note = st.text_area("Annotation / Instruction :")
         
         if st.button("✅ Valider le transfert"):
-            # Mise à jour de la base de données
-            full_df.loc[full_df["ID"] == id_choisi, "Localisation"] = destinataire
-            full_df.loc[full_df["ID"] == id_choisi, "Statut"] = f"Transmis par {role_actuel}"
+            df_all.loc[df_all["ID"] == sel_id, ["Localisation", "Statut"]] = [dest, f"Transmis par {role_actuel}"]
+            df_all.loc[df_all["ID"] == sel_id, "Observations"] = f"[{role_actuel}]: {note} | " + str(courrier['Observations'])
+            df_all.to_excel(DB_FILE, index=False)
             
-            # Accumulation des notes
-            anciennes_notes = str(full_df.loc[full_df["ID"] == id_choisi, "Observations"].values[0])
-            nouvelle_note = f"[{role_actuel}]: {note} | " + anciennes_notes
-            full_df.loc[full_df["ID"] == id_choisi, "Observations"] = nouvelle_note
+            # Notification Email au service suivant
+            envoyer_notification(SERVICES_MAILS[dest], dest, courrier['Objet'])
             
-            full_df.to_excel(DB_FILE, index=False)
-            st.success(f"Courrier transféré au service {destinataire}")
+            st.success(f"Dossier transmis avec succès à : {dest}")
             st.rerun()
-
     with c2:
         if 'view_pdf' in st.session_state:
-            path_pdf = os.path.join(UPLOAD_DIR, st.session_state['view_pdf'])
-            if os.path.exists(path_pdf):
-                display_pdf(path_pdf)
-            else:
-                st.error("Fichier introuvable sur le serveur.")
+            path = os.path.join(UPLOAD_DIR, st.session_state['view_pdf'])
+            if os.path.exists(path): display_pdf(path)
 else:
-    st.info(f"💡 Aucun courrier n'est actuellement en attente au service {role_actuel}.")
+    st.info(f"💡 Aucun courrier en attente pour le service {role_actuel}.")
 
-# --- RECHERCHE GLOBALE (HISTORIQUE) ---
-with st.expander("🔍 Rechercher un courrier dans tout le système (Archives)"):
-    search_query = st.text_input("Tapez un mot-clé (Nom, Objet, Référence...)")
-    if search_query:
-        resultats = full_df[full_df.astype(str).apply(lambda x: x.str.contains(search_query, case=False)).any(axis=1)]
-        st.dataframe(resultats, use_container_width=True)
+# 3. ARCHIVES
+with st.expander("🔍 Rechercher dans les archives (Tous les services)"):
+    query = st.text_input("Mot-clé (Objet, Nom, Réf...)")
+    if query:
+        result = df_all[df_all.astype(str).apply(lambda x: x.str.contains(query, case=False)).any(axis=1)]
+        st.dataframe(result, use_container_width=True)
 
-# --- FOOTER ---
 st.markdown("---")
-st.markdown("<p style='text-align: center; color: gray;'>© 2026 ADGA SOLUTIONS | Logiciel de Gestion de Courrier pour LTA</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: gray;'>© 2026 ADGA SOLUTIONS | Système GEC | adgasolutions@gmail.com </p>", unsafe_allow_html=True)
